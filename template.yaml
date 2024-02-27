@@ -1,0 +1,425 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Template for a SAM Test Websocket"
+
+###################################################
+# - Globals
+###################################################
+Globals:
+  Function:
+    Timeout: 120
+    MemorySize: 256
+    CodeUri: src/
+    Runtime: nodejs18.x
+    Architectures:
+      - x86_64
+
+###################################################
+# - Resources
+###################################################
+Resources:
+  SamTestWSSocketRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Name: SamTestWSSocketRule
+      Description: "Rule to trigger lambda when a new message is sent to the websocket"
+      EventBusName: !ImportValue SamTestEventBusArn
+      EventPattern:
+        source:
+          - "sam-test.websocket"
+        detail-type:
+          - "sam-test.webSocket.message"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt wsSendMessageTickerAndTickers.Arn
+          Id: WSSendMessageTickerAndTickersTarget
+
+  Auth:
+    Type: "AWS::ApiGatewayV2::Authorizer"
+    Properties:
+      IdentitySource:
+        - "route.request.querystring.token"
+      Name: wsAuth
+      ApiId: !Ref SamTestWebSocketApi
+      AuthorizerType: REQUEST
+      AuthorizerUri: !Join
+        - ""
+        - - "arn:aws:apigateway:"
+          - !Ref AWS::Region
+          - ":lambda:path/2015-03-31/functions/"
+          - !ImportValue LiqiUsersApiKeyAuthorizerWebsocketFunctionArn
+          - "/invocations"
+  AuthLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue LiqiUsersApiKeyAuthorizerWebsocketFunctionArn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SamTestWebSocketApi}/*
+
+  WebSocketDeployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+      - SamTestWebSocketApi
+      - ConnectRoute
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+      DeploymentId: !Ref WebSocketDeployment
+      StageName: sandbox
+
+  wsConnect:
+    Type: AWS::Serverless::Function
+    Connectors:
+      ConnTableManager:
+        Properties:
+          Destination:
+            - Type: AWS::DynamoDB::Table
+              Arn:
+                Fn::ImportValue: SamTestWebSocketTableArn
+          Permissions:
+            - Read
+            - Write
+    Properties:
+      FunctionName: SamTestWebsocketWSConnect
+      Tags:
+        service: "SamTestWebsocketWSConnect"
+      Handler: wsConnect.handler
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          DATABASE_NAME:
+            Fn::ImportValue: SamTestWebSocketTableName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: !If
+                - IsEnvProvided
+                - !FindInMap [EnvMap, !Ref Env, LogsMap]
+                - "Allow"
+              Action:
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+              Resource: "arn:aws:logs:*:*:*"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        EntryPoints:
+          - lambdas/wsConnect.ts
+        External:
+          - aws-sdk
+  ConnectRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    DependsOn: ConnectLambdaIntegration
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+      RouteKey: "$connect"
+      AuthorizationType: CUSTOM
+      OperationName: ConnectRoute
+      AuthorizerId: !Ref Auth
+      Target: !Sub "integrations/${ConnectLambdaIntegration}"
+  ConnectLambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+      Description: Connect
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${wsConnect.Arn}/invocations
+  wsConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: wsConnect
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt wsConnect.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SamTestWebSocketApi}/*
+
+  wsDisconnect:
+    Type: AWS::Serverless::Function
+    Connectors:
+      ConnTableManager:
+        Properties:
+          Destination:
+            - Type: AWS::DynamoDB::Table
+              Arn:
+                Fn::ImportValue: SamTestWebSocketTableArn
+          Permissions:
+            - Read
+            - Write
+    Properties:
+      FunctionName: SamTestWebsocketWSDisconnect
+      Tags:
+        service: "SamTestWebsocketWSDisconnect"
+      Handler: wsDisconnect.handler
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          DATABASE_NAME:
+            Fn::ImportValue: SamTestWebSocketTableName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: !If
+                - IsEnvProvided
+                - !FindInMap [EnvMap, !Ref Env, LogsMap]
+                - "Allow"
+              Action:
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+              Resource: "arn:aws:logs:*:*:*"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        EntryPoints:
+          - lambdas/wsDisconnect.ts
+        External:
+          - aws-sdk
+  DisconnectRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+      RouteKey: "$disconnect"
+      Target: !Sub "integrations/${DisconnectLambdaIntegration}"
+  DisconnectLambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+      Description: Disconnect
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${wsDisconnect.Arn}/invocations
+  wsDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: wsDisconnect
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt wsDisconnect.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SamTestWebSocketApi}/*
+  wsDefault:
+    Type: AWS::Serverless::Function
+    Connectors:
+      ConnTableManager:
+        Properties:
+          Destination:
+            - Type: AWS::DynamoDB::Table
+              Arn:
+                Fn::ImportValue: SamTestWebSocketTableArn
+          Permissions:
+            - Read
+            - Write
+    Properties:
+      FunctionName: SamTestWebsocketWSDefault
+      Tags:
+        service: "SamTestWebsocketWSDefault"
+      Handler: wsDefault.handler
+      Runtime: nodejs16.x
+      Environment:
+        Variables:
+          DATABASE_NAME:
+            Fn::ImportValue: SamTestWebSocketTableName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: !If
+                - IsEnvProvided
+                - !FindInMap [EnvMap, !Ref Env, LogsMap]
+                - "Allow"
+              Action:
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+              Resource: "arn:aws:logs:*:*:*"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        EntryPoints:
+          - lambdas/wsDefault.ts
+        External:
+          - aws-sdk
+  DefaultRoute:
+    Type: "AWS::ApiGatewayV2::Route"
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${DefaultLambdaIntegration}"
+  DefaultLambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SamTestWebSocketApi
+      Description: Default
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${wsDefault.Arn}/invocations
+  wsDefaultPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: wsDefault
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt wsDefault.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SamTestWebSocketApi}/*
+  wsSendMessageTickerAndTickers:
+    Type: AWS::Serverless::Function
+    Connectors:
+      ConnTableManager:
+        Properties:
+          Destination:
+            - Type: AWS::DynamoDB::Table
+              Arn:
+                Fn::ImportValue: SamTestWebSocketTableArn
+          Permissions:
+            - Read
+            - Write
+    Properties:
+      FunctionName: wsSendMessageTickerAndTickers
+      Tags:
+        service: "SamTestWebsocketWSSendMessageTickerAndTickers"
+      Handler: wsSendMessageTickerAndTickers.handler
+      Environment:
+        Variables:
+          DATABASE_NAME:
+            Fn::ImportValue: SamTestWebSocketTableName
+          API_ENDPOINT: !Sub "https://${SamTestWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/sandbox/"
+          DD_CAPTURE_LAMBDA_PAYLOAD: false
+          DD_ENHANCED_METRICS: false
+          DD_FLUSH_TO_LOG: true
+          DD_MERGE_XRAY_TRACES: false
+          DD_SERVERLESS_LOGS_ENABLED: false
+          DD_TRACE_ENABLED: false
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - "execute-api:ManageConnections"
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*"
+            - Effect: "Deny"
+              Action:
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+              Resource: "arn:aws:logs:*:*:*"
+      Events:
+        WebSocketRule:
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              source:
+                - "sam-test.websocket"
+              detail-type:
+                - "sam-test.webSocket.message"
+            EventBusName: !ImportValue SamTestEventBusArn
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        EntryPoints:
+          - lambdas/wsSendMessageTickerAndTickers.ts
+        External:
+          - aws-sdk
+  wsSendMessagePermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt wsSendMessageTickerAndTickers.Arn
+      Principal: "events.amazonaws.com"
+      SourceArn: !ImportValue SamTestEventBusArn
+
+  wsSendMessageOrders:
+    Type: AWS::Serverless::Function
+    Connectors:
+      ConnTableManager:
+        Properties:
+          Destination:
+            - Type: AWS::DynamoDB::Table
+              Arn:
+                Fn::ImportValue: SamTestWebSocketTableArn
+          Permissions:
+            - Read
+            - Write
+    Properties:
+      FunctionName: SamTestWebsocketWSSendMessageOrders
+      Tags:
+        service: "SamTestWebsocketWSSendMessageOrders"
+      Handler: wsSendMessageOrders.handler
+      Environment:
+        Variables:
+          DATABASE_NAME:
+            Fn::ImportValue: SamTestWebSocketTableName
+          API_ENDPOINT: !Sub "https://${SamTestWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/sandbox/"
+          DD_CAPTURE_LAMBDA_PAYLOAD: false
+          DD_ENHANCED_METRICS: false
+          DD_FLUSH_TO_LOG: true
+          DD_MERGE_XRAY_TRACES: false
+          DD_SERVERLESS_LOGS_ENABLED: false
+          DD_TRACE_ENABLED: false
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - "execute-api:ManageConnections"
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*"
+            - Effect: !If
+                - IsEnvProvided
+                - !FindInMap [EnvMap, !Ref Env, LogsMap]
+                - "Deny"
+              Action:
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+              Resource: "arn:aws:logs:*:*:*"
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - "sqs:ReceiveMessage"
+                - "sqs:DeleteMessage"
+                - "sqs:GetQueueAttributes"
+                - "sqs:SendMessage"
+              Resource:
+                - !ImportValue SamTestSQSWebsocketOrdersStdArn
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        EntryPoints:
+          - lambdas/wsSendMessageOrders.ts
+        External:
+          - aws-sdk
+  wsSendMessageOrderPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt wsSendMessageOrders.Arn
+      Principal: "sqs.amazonaws.com"
+      SourceArn: !ImportValue SamTestSQSWebsocketOrdersStdArn
+  WsSendMessageOrderMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !ImportValue SamTestSQSWebsocketOrdersStdArn
+      FunctionName: !GetAtt wsSendMessageOrders.Arn
+      Enabled: true
+
+###################################################
+# - Outputs
+###################################################
+Outputs:
+  wsSendMessageFunctionArn:
+    Description: "Lambda Function ARN for sending message to WebSocket"
+    Value: !GetAtt wsSendMessageTickerAndTickers.Arn
+    Export:
+      Name: wsSendMessageFunctionArn

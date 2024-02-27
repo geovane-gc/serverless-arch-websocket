@@ -1,0 +1,4 @@
+node_modules
+.aws-sam
+graphql/types/graphql.d.ts
+.eslitnrc
