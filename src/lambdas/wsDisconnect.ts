@@ -1,13 +1,16 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
 import { DynamoDB } from 'aws-sdk';
 
-const dynamoDb = new DynamoDB.DocumentClient({ region: process.env.DEFAULT_REGION });
-const TABLE_NAME = process.env.DATABASE_NAME || '';
+const dynamoDb = new DynamoDB.DocumentClient({
+  region: process.env.DEFAULT_REGION,
+});
+const TABLE_NAME = process.env.DATABASE_NAME || 'SamTestWebSocketTableName';
 
 export const handler = async (event: APIGatewayProxyEvent) => {
   try {
     const authorizer = event?.requestContext?.authorizer;
-    if (!authorizer || !authorizer?.accountId) throw new Error('AccountId not found')
+    if (!authorizer || !authorizer?.accountId)
+      throw new Error('AccountId not found');
 
     const connectionId = event?.requestContext?.connectionId;
     if (!connectionId) throw new Error('ConnectionId not found');
@@ -16,34 +19,37 @@ export const handler = async (event: APIGatewayProxyEvent) => {
 
     return {
       statusCode: 200,
-      body: 'Data successfully saved'
+      body: 'Data successfully saved',
     };
   } catch (err: any) {
     return {
       statusCode: 400,
       body: JSON.stringify({
-        message: err.message
+        message: err.message,
       }),
     };
   }
-
 };
-
 
 function deleteData(connectionId: string, accountId: string) {
   const params = {
     TableName: TABLE_NAME,
     Key: {
-      "account": `ACCOUNT#${accountId}`,
-      "id": connectionId
-    }
+      account: `ACCOUNT#${accountId}`,
+      id: connectionId,
+    },
   };
 
-  return dynamoDb.delete(params).promise()
-    .then(data => {
+  return dynamoDb
+    .delete(params)
+    .promise()
+    .then((data) => {
       console.log('DeleteItem succeeded:', JSON.stringify(data, null, 2));
     })
-    .catch(err => {
-      console.error('Unable to delete item. Error JSON:', JSON.stringify(err, null, 2));
+    .catch((err) => {
+      console.error(
+        'Unable to delete item. Error JSON:',
+        JSON.stringify(err, null, 2),
+      );
     });
 }
