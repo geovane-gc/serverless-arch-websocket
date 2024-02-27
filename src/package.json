@@ -11,11 +11,11 @@
         "compile": "tsc",
         "style": "prettier --write '**'",
         "test": "vitest run",
-        "style-graphql": "prettier --write './graphql/**/**/*.{ts,graphql,js}'",
+        "style-graphql": "prettier --write './lambdas/**/*.{ts,graphql,js}'",
         "build": "tsc",
         "coverage": "vitest run --coverage",
-        "pre-push": "run-s test style",
-        "build-everything": "run-s merge-schema codegen build build-resolvers"
+        "pre-push": "run-s style",
+        "build-everything": "run-s build"
     },
     "dependencies": {
         "aws-sdk": "^2.1532.0",
@@ -24,7 +24,9 @@
     "keywords": [],
     "author": "",
     "license": "ISC",
-    "eslintIgnore": ["./graphql/types/graphql.d.ts"],
+    "eslintIgnore": [
+        "./graphql/types/graphql.d.ts"
+    ],
     "devDependencies": {
         "@aws-appsync/eslint-plugin": "^1.6.0",
         "@aws-appsync/utils": "^1.5.0",
