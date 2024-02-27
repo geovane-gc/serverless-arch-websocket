@@ -1,10 +1,10 @@
 import { APIGatewayProxyEvent } from 'aws-lambda';
 
 export const handler = async (event: APIGatewayProxyEvent) => {
-  console.log('hello from your websocket!');
+  console.log('This is your connect route from websocket!');
 
   return {
     statusCode: 200,
-    body: 'Hello from your websocket.',
+    body: 'This is your connect route from websocket!',
   };
 };
